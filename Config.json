@@ -1,0 +1,12 @@
+{
+  "base_folder": "Desktop/AutoDataPipeline",
+  "input_folder": "input/raw_excel",
+  "cleaned_folder": "cleaned/cleaned_excel",
+  "reports_folder": "reports/formatted_reports",
+  "logs_folder": "logs",
+  "thresholds": {
+    "green": 200,
+    "red": 50
+  },
+  "columns_to_keep": ["Region", "Product", "TotalPrice"]
+}
