@@ -1,18 +1,22 @@
-from pathlib import Path
-import pandas as pd
+import time
+import json
 import shutil
 import logging
+from pathlib import Path
+
+import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import CellIsRule
-import json
-import sys
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
 with open(CONFIG_PATH) as f:
     config = json.load(f)
+
 
 BASE = Path.home() / config["base_folder"]
 INPUT = BASE / config["input_folder"]
@@ -33,49 +37,31 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-logging.info(" Automation System Started:")
 
 
-excel_files = list(INPUT.glob("*.xlsx"))
-
-if not excel_files:
-    logging.warning("No Excel files found in input folder.")
-    print("⚠ No Excel files found in input folder.")
-    sys.exit()
-
-
-for file in excel_files:
+def process_file(file):
     try:
-        logging.info(f"Processing file: {file.name}")
         df = pd.read_excel(file)
-
 
         df = df.dropna()
         df = df.drop_duplicates()
-
-
         df = df[[col for col in columns_to_keep if col in df.columns]]
-
 
         cleaned_file = CLEANED / file.name
         df.to_excel(cleaned_file, index=False)
-        logging.info(f"Cleaned file saved: {cleaned_file.name}")
-
 
         by_region = df.groupby("Region")["TotalPrice"].sum()
         by_product = df.groupby("Product")["TotalPrice"].sum()
 
         report_file = REPORTS / f"REPORT_{file.name}"
+
         with pd.ExcelWriter(report_file, engine="openpyxl") as writer:
             by_region.to_excel(writer, sheet_name="Sales_By_Region")
             by_product.to_excel(writer, sheet_name="Sales_By_Product")
 
-        logging.info(f"Report created: {report_file.name}")
-
-
         wb = load_workbook(report_file)
-        for ws in wb.worksheets:
 
+        for ws in wb.worksheets:
             header_font = Font(bold=True, color="FFFFFF")
             header_fill = PatternFill("solid", fgColor="4F81BD")
             align = Alignment(horizontal="center", vertical="center")
@@ -92,7 +78,6 @@ for file in excel_files:
                 cell.alignment = align
                 cell.border = border
 
-
             for column in ws.columns:
                 max_len = 0
                 col = column[0].column_letter
@@ -101,12 +86,12 @@ for file in excel_files:
                         max_len = max(max_len, len(str(cell.value)))
                 ws.column_dimensions[col].width = max_len + 3
 
-
             green_rule = CellIsRule(
                 operator='greaterThan',
                 formula=[str(green_threshold)],
                 fill=PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
             )
+
             red_rule = CellIsRule(
                 operator='lessThan',
                 formula=[str(red_threshold)],
@@ -120,15 +105,43 @@ for file in excel_files:
             ws.auto_filter.ref = ws.dimensions
 
         wb.save(report_file)
-        logging.info("Formatting applied successfully")
-
 
         shutil.move(file, INPUT / f"PROCESSED_{file.name}")
-        logging.info(f"Original file archived: {file.name}")
+
+        logging.info(f"{file.name} processed successfully")
 
     except Exception as e:
-        logging.error(f"Error processing {file.name} -> {e}")
+        logging.error(f"{file.name} failed: {e}")
 
-logging.info("Automation System Finished Successfully")
 
-print(" FULL DATA AUTOMATION PIPELINE COMPLETED")
+class WatchHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        if not event.is_directory:
+            file = Path(event.src_path)
+            if file.suffix == ".xlsx":
+                time.sleep(2)
+                process_file(file)
+
+
+def run_pipeline():
+    for file in INPUT.glob("*.xlsx"):
+        process_file(file)
+
+    observer = Observer()
+    handler = WatchHandler()
+
+    observer.schedule(handler, path=str(INPUT), recursive=False)
+    observer.start()
+
+
+    try:
+        while True:
+            time.sleep(2)
+    except KeyboardInterrupt:
+        observer.stop()
+
+    observer.join()
+
+
+if __name__ == "__main__":
+    run_pipeline()
